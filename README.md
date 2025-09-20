@@ -1,9 +1,3 @@
-## Requirements
-
-* Python 3.8+
-* OpenCV (`opencv-python`, `opencv-contrib-python`)
-* NumPy
-
 Install dependencies:
 
 ```bash
@@ -44,3 +38,4 @@ faces/
 python train_faces.py
 ```
 
+**Rest to be done later..........**
