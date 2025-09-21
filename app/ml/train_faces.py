@@ -39,9 +39,9 @@ face_recognizer = cv.face.LBPHFaceRecognizer_create()
 face_recognizer.train(features, labels)
 
 # Save trained model
-face_recognizer.save("face_trained.yml")
+face_recognizer.save("data/face_trained.yml")
 
 # Save names mapping
-np.save("people.npy", np.array(people))
+np.save("data/people.npy", np.array(people))
 
 print("Training complete. face_trained.yml and people.npy saved.")
