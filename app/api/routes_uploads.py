@@ -1,20 +1,17 @@
+# app/api/routes_uploads.py
 import os
 import uuid
 import asyncio
 from datetime import datetime
-
 import boto3
 from botocore.exceptions import ClientError
-
 from fastapi import APIRouter, File, UploadFile, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
-
 from dotenv import load_dotenv
 
 load_dotenv()
 
 router = APIRouter()
-print("AWS_DEFAULT_REGION", os.getenv("AWS_DEFAULT_REGION"))
 
 
 s3_client = boto3.client(

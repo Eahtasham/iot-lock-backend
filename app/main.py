@@ -1,6 +1,12 @@
 # app/main.py
 from fastapi import FastAPI
-from app.api import routes_device, routes_auth, routes_visits, routes_notify, routes_uploads
+# Import all route modules
+from app.api.routes_auth import router as auth_router
+from app.api.routes_visits import router as visits_router
+from app.api.routes_device import router as device_router
+from app.api.routes_notify import router as notify_router
+from app.api.routes_visitors import router as visitors_router
+from app.api import routes_uploads as routes_uploads
 
 app = FastAPI(
     title="IoT Lock API",
@@ -8,20 +14,12 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Upload endpoints
 app.include_router(routes_uploads.router, prefix="/upload", tags=["Upload Image"])
-
-# Device endpoints
-app.include_router(routes_device.router, prefix="/device", tags=["Device"])
-
-# Auth endpoints
-app.include_router(routes_auth.router, prefix="/auth", tags=["Auth"])
-
-# Visits endpoints
-app.include_router(routes_visits.router, prefix="/visits", tags=["Visits"])
-
-# Notifications endpoints
-app.include_router(routes_notify.router, prefix="/notify", tags=["Notifications"])
+app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(visits_router, prefix="/api/visits", tags=["Visits"])
+app.include_router(device_router, prefix="/api/device", tags=["Device Management"])
+app.include_router(notify_router, prefix="/api/notify", tags=["Notifications"])
+app.include_router(visitors_router, prefix="/api/visitors", tags=["Visitors"])
 
 
 @app.get("/")
