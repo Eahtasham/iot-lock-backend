@@ -1,16 +1,18 @@
 # app/api/routes_auth.py
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
 from typing import Optional
-import jwt
-from datetime import datetime, timedelta
+from jwt import encode, decode, PyJWTError
+from datetime import datetime, timedelta, timezone
 from app.db.crud import create_owner, authenticate_owner, get_owner_by_id, update_owner_password
 import os
 
 router = APIRouter()
+security = HTTPBearer()
 
-# Configuration - In production, use environment variables
-SECRET_KEY = os.getenv("API_KEY")  # Change this in production!
+# Configuration
+SECRET_KEY = os.getenv("API_KEY", "your-secret-key-change-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
@@ -35,82 +37,66 @@ class Token(BaseModel):
     name: str
     email: str
 
-# JWT token functions
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+# JWT utilities
+def create_access_token(user_id: int, expires_delta: Optional[timedelta] = None) -> str:
+    """Create JWT access token"""
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    payload = {"sub": str(user_id), "exp": expire}
+    return encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
-def verify_token(token: str):
+def verify_token(token: str) -> Optional[int]:
+    """Verify JWT token and return user ID"""
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: int = payload.get("sub")
-        if user_id is None:
-            return None
-        return user_id
-    except jwt.PyJWTError:
+        payload = decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        return int(user_id) if user_id else None
+    except (PyJWTError, ValueError):
         return None
 
-@router.post("/register", response_model=dict)
+# Dependency for authentication
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> int:
+    """Get current user ID from JWT token"""
+    user_id = verify_token(credentials.credentials)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return user_id
+
+# Routes
+@router.post("/register")
 async def register(user_data: UserRegister):
     """Register a new owner"""
-    try:
-        # Create new owner
-        owner = await create_owner(
-            name=user_data.name,
-            email=user_data.email,
-            password=user_data.password
-        )
-        
-        if not owner:
-            raise HTTPException(
-                status_code=400,
-                detail="Email already registered"
-            )
-        
-        return {
-            "status": "success",
-            "message": "Owner registered successfully",
-            "owner": owner
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    owner = await create_owner(
+        name=user_data.name,
+        email=user_data.email,
+        password=user_data.password
+    )
+    
+    if not owner:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    return {
+        "status": "success",
+        "message": "Owner registered successfully",
+        "owner": owner
+    }
 
 @router.post("/login", response_model=Token)
 async def login(user_credentials: UserLogin):
     """Authenticate owner and return JWT token"""
-    try:
-        # Authenticate user
-        owner = await authenticate_owner(user_credentials.email, user_credentials.password)
-        
-        if not owner:
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid email or password"
-            )
-        
-        # Create access token
-        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        access_token = create_access_token(
-            data={"sub": str(owner["id"])}, expires_delta=access_token_expires
-        )
-        
-        return {
-            "access_token": access_token,
-            "token_type": "bearer",
-            "user_id": owner["id"],
-            "name": owner["name"],
-            "email": owner["email"]
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    owner = await authenticate_owner(user_credentials.email, user_credentials.password)
+    
+    if not owner:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    access_token = create_access_token(owner["id"])
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user_id": owner["id"],
+        "name": owner["name"],
+        "email": owner["email"]
+    }
 
 @router.post("/logout")
 async def logout():
@@ -121,62 +107,40 @@ async def logout():
     }
 
 @router.get("/me")
-async def get_current_user(token: str):
-    """Get current user information from token"""
-    try:
-        user_id = verify_token(token)
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        
-        owner = await get_owner_by_id(int(user_id))
-        if not owner:
-            raise HTTPException(status_code=404, detail="Owner not found")
-        
-        return {
-            "status": "success",
-            "owner": owner
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def get_current_user_info(current_user_id: int = Depends(get_current_user)):
+    """Get current user information"""
+    owner = await get_owner_by_id(current_user_id)
+    
+    if not owner:
+        raise HTTPException(status_code=404, detail="Owner not found")
+    
+    return {
+        "status": "success",
+        "owner": owner
+    }
 
 @router.post("/change-password")
-async def change_password(password_data: ChangePassword, token: str):
+async def change_password(
+    password_data: ChangePassword,
+    current_user_id: int = Depends(get_current_user)
+):
     """Change user password"""
-    try:
-        user_id = verify_token(token)
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        
-        # Verify old password
-        owner = await get_owner_by_id(int(user_id))
-        if not owner:
-            raise HTTPException(status_code=404, detail="Owner not found")
-        
-        # Authenticate with old password
-        authenticated = await authenticate_owner(owner["email"], password_data.old_password)
-        if not authenticated:
-            raise HTTPException(status_code=400, detail="Invalid old password")
-        
-        # Update password
-        success = await update_owner_password(int(user_id), password_data.new_password)
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to update password")
-        
-        return {
-            "status": "success",
-            "message": "Password updated successfully"
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Dependency to get current user from token
-async def get_current_user_dependency(token: str) -> int:
-    """Dependency to extract user ID from token"""
-    user_id = verify_token(token)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    return int(user_id)
+    # Get current user
+    owner = await get_owner_by_id(current_user_id)
+    if not owner:
+        raise HTTPException(status_code=404, detail="Owner not found")
+    
+    # Verify old password
+    authenticated = await authenticate_owner(owner["email"], password_data.old_password)
+    if not authenticated:
+        raise HTTPException(status_code=400, detail="Invalid old password")
+    
+    # Update password
+    success = await update_owner_password(current_user_id, password_data.new_password)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update password")
+    
+    return {
+        "status": "success",
+        "message": "Password updated successfully"
+    }
