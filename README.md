@@ -42,7 +42,7 @@ IOT-LOCK-BACKEND/
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/your-org/iot-lock-backend.git
+git clone https://github.com/Eahtasham/iot-lock-backend.git
 cd iot-lock-backend
 ```
 

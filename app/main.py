@@ -1,39 +1,29 @@
 # app/main.py
-from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import JSONResponse
-import shutil
-import os
-from datetime import datetime
+from fastapi import FastAPI
+from app.api import routes_device, routes_auth, routes_visits, routes_notify, routes_uploads
 
-app = FastAPI()
+app = FastAPI(
+    title="IoT Lock API",
+    description="API for IoT Lock system. Mobile app or Raspberry Pi can upload images and check status.",
+    version="1.0.0"
+)
 
-# Folder to save uploaded images
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+# Upload endpoints
+app.include_router(routes_uploads.router, prefix="/upload", tags=["Upload Image"])
 
-@app.post("/upload-image")
-async def upload_image(file: UploadFile = File(...)):
-    try:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{timestamp}_{file.filename}"
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
+# Device endpoints
+app.include_router(routes_device.router, prefix="/device", tags=["Device"])
 
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+# Auth endpoints
+app.include_router(routes_auth.router, prefix="/auth", tags=["Auth"])
 
-        # Future: call ML module here
-        # result = predict_face(file_path)
+# Visits endpoints
+app.include_router(routes_visits.router, prefix="/visits", tags=["Visits"])
 
-        return JSONResponse({
-            "status": "success",
-            "filename": filename,
-            "message": "Image received"
-        })
-
-    except Exception as e:
-        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+# Notifications endpoints
+app.include_router(routes_notify.router, prefix="/notify", tags=["Notifications"])
 
 
 @app.get("/")
 def read_root():
-    return {"message": "FastAPI server is running. POST images to /upload-image"}
+    return {"message": "FastAPI server is running on the port 8000"}
