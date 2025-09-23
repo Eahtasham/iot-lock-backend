@@ -31,10 +31,10 @@ class DetectRequest(BaseModel):
     images: List[str]  # list of S3 URLs
 
 # Replace this with the actual URL of your notification endpoint
-NOTIFICATION_ENDPOINT = "http://127.0.0.1:8000/raspberry-pi/visitor-detected"
+NOTIFICATION_ENDPOINT = "https://iot-lock-backend.onrender.com/api/notify/raspberry-pi/visitor-detected"
 
 @router.post("/detect-visitor")
-def detect_visitor(
+async def detect_visitor(
     req: DetectRequest,
     owner_id: int = Query(..., description="Owner ID to send notification to")
 ):
