@@ -7,7 +7,7 @@ import os
 import requests
 from datetime import datetime
 
-app = FastAPI()
+router = FastAPI()
 
 # Paths to ML model and labels
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) 
@@ -33,7 +33,7 @@ class DetectRequest(BaseModel):
 # Replace this with the actual URL of your notification endpoint
 NOTIFICATION_ENDPOINT = "http://127.0.0.1:8000/raspberry-pi/visitor-detected"
 
-@app.post("/detect-visitor")
+@router.post("/detect-visitor")
 def detect_visitor(
     req: DetectRequest,
     owner_id: int = Query(..., description="Owner ID to send notification to")
