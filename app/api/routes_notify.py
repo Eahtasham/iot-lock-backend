@@ -4,13 +4,13 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import httpx
 import json
+from datetime import datetime
 from app.db.crud import get_device_tokens_by_owner, get_visit_by_id, remove_invalid_tokens
 
 router = APIRouter()
 
-# FCM Configuration - In production, use environment variables
-FCM_SERVER_KEY = "your-fcm-server-key"  # Replace with your actual FCM server key
-FCM_URL = "https://fcm.googleapis.com/fcm/send"
+# Expo Push Notification Configuration
+EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
 
 # Pydantic models
 class SendNotificationRequest(BaseModel):
@@ -28,30 +28,44 @@ class BulkNotificationRequest(BaseModel):
     body: str
     data: Optional[Dict[str, Any]] = None
 
-async def send_fcm_notification(fcm_token: str, title: str, body: str, data: Optional[Dict] = None):
-    """Send FCM notification to a specific token"""
+async def send_expo_notification(expo_token: str, title: str, body: str, data: Optional[Dict] = None):
+    """Send Expo push notification to a specific token"""
     headers = {
-        "Authorization": f"key={FCM_SERVER_KEY}",
+        "Accept": "application/json",
+        "Accept-encoding": "gzip, deflate",
         "Content-Type": "application/json"
     }
     
     payload = {
-        "to": fcm_token,
-        "notification": {
-            "title": title,
-            "body": body,
-            "sound": "default"
-        },
+        "to": expo_token,
+        "title": title,
+        "body": body,
         "data": data or {},
-        "priority": "high"
+        "sound": "default",
+        "priority": "high",
+        "channelId": "default"
     }
     
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.post(FCM_URL, json=payload, headers=headers)
-            return response.json()
+            response = await client.post(EXPO_PUSH_URL, json=payload, headers=headers)
+            result = response.json()
+            
+            # Check for errors in the response
+            if response.status_code == 200:
+                if "data" in result and len(result["data"]) > 0:
+                    ticket = result["data"][0]
+                    if ticket.get("status") == "error":
+                        return {"success": 0, "error": ticket.get("message", "Unknown error")}
+                    else:
+                        return {"success": 1, "id": ticket.get("id")}
+                else:
+                    return {"success": 0, "error": "No data in response"}
+            else:
+                return {"success": 0, "error": f"HTTP {response.status_code}: {result}"}
+                
         except Exception as e:
-            print(f"FCM Error: {e}")
+            print(f"Expo Push Error: {e}")
             return {"success": 0, "error": str(e)}
 
 async def send_notifications_to_owner(owner_id: int, title: str, body: str, data: Optional[Dict] = None):
@@ -67,22 +81,27 @@ async def send_notifications_to_owner(owner_id: int, title: str, body: str, data
         invalid_tokens = []
         
         for device in device_tokens:
-            result = await send_fcm_notification(
-                fcm_token=device["fcm_token"],
+            expo_token = device.get("expo_push_token")
+            if not expo_token:
+                continue
+                
+            result = await send_expo_notification(
+                expo_token=expo_token,
                 title=title,
                 body=body,
                 data=data
             )
             
             results.append({
-                "token": device["fcm_token"][:20] + "...",  # Truncate for privacy
+                "token": expo_token[:30] + "...",  # Truncate for privacy
                 "platform": device["platform"],
+                "device_name": device.get("device_name", "Unknown Device"),
                 "result": result
             })
             
             # Check for invalid tokens
-            if result.get("success") == 0 and "InvalidRegistration" in str(result.get("results", [])):
-                invalid_tokens.append(device["fcm_token"])
+            if result.get("success") == 0 and "DeviceNotRegistered" in str(result.get("error", "")):
+                invalid_tokens.append(expo_token)
         
         # Remove invalid tokens
         if invalid_tokens:
@@ -129,17 +148,18 @@ async def send_visit_notification(notification_data: VisitNotificationRequest, b
         
         # Prepare notification content
         visitor_name = visit.get("visitor_name", "Unknown visitor")
-        title = "New Visitor Alert!"
+        title = "🔔 New Visitor Alert!"
         body = f"{visitor_name} is at your door"
         
         # Additional data for the mobile app
         data = {
             "visit_id": str(visit["id"]),
             "visitor_name": visitor_name or "",
-            "image_url": visit["image_url"],
+            "image_url": visit.get("image_url", ""),
             "detected_label": visit.get("detected_label", ""),
             "timestamp": visit["timestamp"].isoformat() if visit.get("timestamp") else "",
-            "action": "new_visit"
+            "action": "new_visit",
+            "screen": "VisitDetails"  # For navigation
         }
         
         # Send notification in background
@@ -186,13 +206,17 @@ async def send_bulk_notification(notification_data: BulkNotificationRequest, bac
 
 @router.post("/test/{owner_id}")
 async def send_test_notification(owner_id: int):
-    """Send test notification to verify FCM setup"""
+    """Send test notification to verify Expo setup"""
     try:
         result = await send_notifications_to_owner(
             owner_id=owner_id,
-            title="Test Notification",
+            title="🔧 Test Notification",
             body="This is a test notification from your IoT lock system",
-            data={"action": "test", "timestamp": "2024-01-01T00:00:00Z"}
+            data={
+                "action": "test", 
+                "timestamp": "2024-01-01T00:00:00Z",
+                "screen": "Home"
+            }
         )
         
         return {
@@ -217,26 +241,11 @@ async def get_notification_status(owner_id: int):
             "devices": [
                 {
                     "platform": device["platform"],
-                    "token_preview": device["fcm_token"][:20] + "..." if device["fcm_token"] else None
+                    "device_name": device.get("device_name", "Unknown Device"),
+                    "token_preview": device["expo_push_token"][:30] + "..." if device.get("expo_push_token") else None
                 }
                 for device in device_tokens
             ]
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# Webhook endpoint for receiving notifications (if needed)
-@router.post("/receive")
-async def receive_notification(payload: Dict[str, Any]):
-    """Receive notification webhook (for external integrations)"""
-    try:
-        # Process incoming notification/webhook
-        # This could be used for external service integrations
-        
-        return {
-            "status": "success",
-            "message": "Notification received and processed",
-            "payload": payload
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -246,6 +255,46 @@ async def notification_health_check():
     """Health check endpoint for notification service"""
     return {
         "status": "success",
-        "message": "Notification service is running",
-        "fcm_configured": bool(FCM_SERVER_KEY and FCM_SERVER_KEY != "your-fcm-server-key")
+        "message": "Expo notification service is running",
+        "service_type": "expo_push_notifications"
     }
+
+# Raspberry Pi endpoint - call this from your Pi
+@router.post("/raspberry-pi/visitor-detected")
+async def raspberry_pi_visitor_detected(
+    owner_id: int,
+    visitor_name: Optional[str] = "Unknown visitor",
+    image_url: Optional[str] = None,
+    detected_label: Optional[str] = None,
+    background_tasks: BackgroundTasks = BackgroundTasks()
+):
+    """Endpoint for Raspberry Pi to trigger visitor notifications"""
+    try:
+        title = "🚪 Someone's at the Door!"
+        body = f"{visitor_name} detected at your door"
+        
+        data = {
+            "visitor_name": visitor_name or "Unknown visitor",
+            "image_url": image_url or "",
+            "detected_label": detected_label or "",
+            "timestamp": datetime.utcnow().isoformat(),
+            "action": "visitor_detected",
+            "screen": "VisitorAlert"
+        }
+        
+        background_tasks.add_task(
+            send_notifications_to_owner,
+            owner_id=owner_id,
+            title=title,
+            body=body,
+            data=data
+        )
+        
+        return {
+            "status": "success",
+            "message": "Visitor detection notification queued",
+            "owner_id": owner_id,
+            "visitor_name": visitor_name
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

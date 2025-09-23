@@ -17,14 +17,14 @@ router = APIRouter()
 # =========================
 class RegisterDeviceRequest(BaseModel):
     owner_id: int
-    fcm_token: str
+    expo_push_token: str  # Changed from fcm_token to expo_push_token
     platform: Optional[str] = None  # "android" or "ios"
     device_name: Optional[str] = None
     app_version: Optional[str] = None
 
 class UnregisterDeviceRequest(BaseModel):
     owner_id: int
-    fcm_token: str
+    expo_push_token: str  # Changed from fcm_token to expo_push_token
 
 class DeviceStatusResponse(BaseModel):
     status: str
@@ -45,13 +45,16 @@ async def register_device(device_data: RegisterDeviceRequest):
     if device_data.platform and device_data.platform.lower() not in ["android", "ios"]:
         raise HTTPException(status_code=400, detail="Platform must be 'android' or 'ios'")
     
-    if not device_data.fcm_token or len(device_data.fcm_token) < 20:
-        raise HTTPException(status_code=400, detail="Invalid FCM token format")
+    # Validate Expo push token format
+    if not device_data.expo_push_token or not device_data.expo_push_token.startswith('ExponentPushToken['):
+        raise HTTPException(status_code=400, detail="Invalid Expo push token format")
     
     device_token = await register_device_token(
         owner_id=device_data.owner_id,
-        fcm_token=device_data.fcm_token,
-        platform=device_data.platform.lower() if device_data.platform else None
+        expo_push_token=device_data.expo_push_token,  # Updated parameter name
+        platform=device_data.platform.lower() if device_data.platform else None,
+        device_name=device_data.device_name,
+        app_version=device_data.app_version
     )
     
     return DeviceStatusResponse(
@@ -60,7 +63,6 @@ async def register_device(device_data: RegisterDeviceRequest):
         device=dict(device_token)
     )
 
-
 @router.post("/unregister", response_model=DeviceStatusResponse)
 async def unregister_device(device_data: UnregisterDeviceRequest):
     """Unregister device from push notifications"""
@@ -68,12 +70,14 @@ async def unregister_device(device_data: UnregisterDeviceRequest):
     if not owner:
         raise HTTPException(status_code=404, detail="Owner not found")
     
-    success = await unregister_device_token(owner_id=device_data.owner_id, fcm_token=device_data.fcm_token)
+    success = await unregister_device_token(
+        owner_id=device_data.owner_id, 
+        expo_push_token=device_data.expo_push_token  # Updated parameter name
+    )
     if not success:
         raise HTTPException(status_code=404, detail="Device token not found")
     
     return DeviceStatusResponse(status="success", message="Device unregistered successfully")
-
 
 @router.get("/{owner_id}/tokens")
 async def get_owner_devices(owner_id: int):
@@ -92,12 +96,12 @@ async def get_owner_devices(owner_id: int):
             {
                 "id": d["id"],
                 "platform": d["platform"],
-                "token_preview": d["fcm_token"][:20] + "...",
+                "token_preview": d["expo_push_token"][:30] + "..." if d["expo_push_token"] else "N/A",  # Updated field name
+                "device_name": d.get("device_name", "Unknown Device"),
                 "registered_at": d.get("created_at", "Unknown")
             } for d in devices
         ]
     }
-
 
 @router.get("/health")
 async def device_health_check():

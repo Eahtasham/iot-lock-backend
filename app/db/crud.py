@@ -244,41 +244,53 @@ async def get_pending_visits_by_owner(owner_id: int) -> List[Dict[str, Any]]:
 # =========================
 # Device Tokens CRUD
 # =========================
-async def register_device_token(owner_id: int, fcm_token: str, platform: Optional[str] = None) -> Dict[str, Any]:
+async def register_device_token(
+    owner_id: int, 
+    expo_push_token: str, 
+    platform: Optional[str] = None,
+    device_name: Optional[str] = None,
+    app_version: Optional[str] = None
+) -> Dict[str, Any]:
     """Register or update device token for push notifications"""
     pool = await get_pool()
     async with pool.acquire() as conn:
         # Check if token already exists for this owner
         existing = await conn.fetchrow(
-            "SELECT id FROM device_tokens WHERE owner_id = $1 AND fcm_token = $2",
-            owner_id, fcm_token
+            "SELECT id FROM device_tokens WHERE owner_id = $1 AND expo_push_token = $2",
+            owner_id, expo_push_token
         )
         
         if existing:
             # Update existing token
             row = await conn.fetchrow(
-                "UPDATE device_tokens SET platform = $1 WHERE id = $2 RETURNING *",
-                platform, existing['id']
+                """
+                UPDATE device_tokens 
+                SET platform = $1, device_name = $2, app_version = $3, 
+                    is_active = TRUE, updated_at = CURRENT_TIMESTAMP
+                WHERE id = $4 
+                RETURNING *
+                """,
+                platform, device_name, app_version, existing['id']
             )
         else:
             # Create new token
             row = await conn.fetchrow(
                 """
-                INSERT INTO device_tokens (owner_id, fcm_token, platform)
-                VALUES ($1, $2, $3)
+                INSERT INTO device_tokens (owner_id, expo_push_token, platform, device_name, app_version)
+                VALUES ($1, $2, $3, $4, $5)
                 RETURNING *
                 """,
-                owner_id, fcm_token, platform
+                owner_id, expo_push_token, platform, device_name, app_version
             )
         return dict(row)
 
-async def unregister_device_token(owner_id: int, fcm_token: str) -> bool:
+async def unregister_device_token(owner_id: int, expo_push_token: str) -> bool:
     """Remove device token"""
     pool = await get_pool()
     async with pool.acquire() as conn:
         result = await conn.execute(
-            "DELETE FROM device_tokens WHERE owner_id = $1 AND fcm_token = $2",
-            owner_id, fcm_token
+            "DELETE FROM device_tokens WHERE owner_id = $1 AND expo_push_token = $2",
+            owner_id, expo_push_token
         )
         return result == "DELETE 1"
 
@@ -287,13 +299,17 @@ async def get_device_tokens_by_owner(owner_id: int) -> List[Dict[str, Any]]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT * FROM device_tokens WHERE owner_id = $1",
+            """
+            SELECT * FROM device_tokens 
+            WHERE owner_id = $1 AND is_active = TRUE
+            ORDER BY created_at DESC
+            """,
             owner_id
         )
         return [dict(row) for row in rows]
 
 async def remove_invalid_tokens(invalid_tokens: List[str]) -> int:
-    """Remove invalid FCM tokens"""
+    """Remove invalid Expo push tokens"""
     pool = await get_pool()
     async with pool.acquire() as conn:
         if not invalid_tokens:
@@ -301,8 +317,49 @@ async def remove_invalid_tokens(invalid_tokens: List[str]) -> int:
         
         placeholders = ','.join(f'${i+1}' for i in range(len(invalid_tokens)))
         result = await conn.execute(
-            f"DELETE FROM device_tokens WHERE fcm_token IN ({placeholders})",
+            f"DELETE FROM device_tokens WHERE expo_push_token IN ({placeholders})",
             *invalid_tokens
+        )
+        return int(result.split()[-1]) if result.startswith("DELETE") else 0
+
+# Additional helper function for better token management
+async def deactivate_device_token(owner_id: int, expo_push_token: str) -> bool:
+    """Mark device token as inactive instead of deleting (for better tracking)"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE device_tokens 
+            SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
+            WHERE owner_id = $1 AND expo_push_token = $2
+            """,
+            owner_id, expo_push_token
+        )
+        return result == "UPDATE 1"
+
+# Helper function to get active token count for an owner
+async def get_active_device_count(owner_id: int) -> int:
+    """Get count of active devices for an owner"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        count = await conn.fetchval(
+            "SELECT COUNT(*) FROM device_tokens WHERE owner_id = $1 AND is_active = TRUE",
+            owner_id
+        )
+        return count or 0
+
+# Function to clean up old inactive tokens (optional maintenance)
+async def cleanup_inactive_tokens(days_old: int = 30) -> int:
+    """Remove inactive tokens older than specified days"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            DELETE FROM device_tokens 
+            WHERE is_active = FALSE 
+            AND updated_at < CURRENT_TIMESTAMP - INTERVAL '%s days'
+            """,
+            days_old
         )
         return int(result.split()[-1]) if result.startswith("DELETE") else 0
 
