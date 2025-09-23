@@ -308,7 +308,7 @@ async def raspberry_pi_visitor_detected(
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) 
 DATA_DIR = os.path.join(BASE_DIR, "ml", "data")  # adjust if needed
 
-recognizer_path = os.path.join(DATA_DIR, "face_train.yml")
+recognizer_path = os.path.join(DATA_DIR, "face_trained.yml")
 people_path = os.path.join(DATA_DIR, "people.npy")
 
 # Load face recognizer and labels
