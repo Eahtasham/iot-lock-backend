@@ -6,6 +6,8 @@ import httpx
 import json
 import numpy as np
 import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import requests
 import cv2
 from datetime import datetime
@@ -304,88 +306,168 @@ async def raspberry_pi_visitor_detected(
         raise HTTPException(status_code=500, detail=str(e))
     
 
-# Paths to ML model and labels
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) 
-DATA_DIR = os.path.join(BASE_DIR, "ml", "data")  # adjust if needed
+# ======================
+# Paths and model load
+# ======================
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "ml", "data")
 
 recognizer_path = os.path.join(DATA_DIR, "face_trained.yml")
 people_path = os.path.join(DATA_DIR, "people.npy")
 
-# Load face recognizer and labels
 recognizer = cv2.face.LBPHFaceRecognizer_create()
 recognizer.read(recognizer_path)
 people = np.load(people_path, allow_pickle=True)
 
-# Load Haar cascade for face detection
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
-# Confidence threshold
 CONFIDENCE_THRESHOLD = 40
-
-class DetectRequest(BaseModel):
-    images: List[str]  # list of S3 URLs
-
-# Replace this with the actual URL of your notification endpoint
 NOTIFICATION_ENDPOINT = "https://iot-lock-backend.onrender.com/api/notify/raspberry-pi/visitor-detected"
 
+# ======================
+# Database connection
+# ======================
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "ml", "data")
+
+recognizer_path = os.path.join(DATA_DIR, "face_trained.yml")
+people_path = os.path.join(DATA_DIR, "people.npy")
+
+recognizer = cv2.face.LBPHFaceRecognizer_create()
+recognizer.read(recognizer_path)
+people = np.load(people_path, allow_pickle=True)
+
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+
+CONFIDENCE_THRESHOLD = 40
+NOTIFICATION_ENDPOINT = "https://iot-lock-backend.onrender.com/api/notify/raspberry-pi/visitor-detected"
+
+# ======================
+# Database connection
+# ======================
+DB_HOST = "aws-1-ap-south-1.pooler.supabase.com"
+DB_PORT = "6543"
+DB_NAME = "postgres"
+DB_USER = "postgres.nqurgqrqauaxboujobca"
+DB_PASS = "Iot@12345"
+
+def get_visitor_id(visitor_name: str) -> int:
+    """Fetch visitor_id from DB using visitor_name."""
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASS
+        )
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT id FROM visitors WHERE name = %s LIMIT 1", (visitor_name,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row:
+            return row["id"]
+        else:
+            return 0
+    except Exception as e:
+        print(f"DB error: {e}")
+        return 0
+
+def insert_visit(visitor_id: int, owner_id: int, image_url: str):
+    """Insert a visit record into visits table."""
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASS
+        )
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO visits (visitor_id, owner_id, image_url)
+            VALUES (%s, %s, %s)
+        """, (visitor_id, owner_id, image_url))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Failed to insert visit record: {e}")
+
+# ======================
+# Request model
+# ======================
+class DetectRequest(BaseModel):
+    image_url: str  # Single S3 URL
+
+# ======================
+# Endpoint
+# ======================
 @router.post("/detect-visitor")
 async def detect_visitor(
     req: DetectRequest,
     owner_id: int = Query(..., description="Owner ID to send notification to")
 ):
-    detected_names = []
-    representative_image_url = None
-
-    for url in req.images:
-        try:
-            # Download image from S3 directly in memory
-            img_data = requests.get(url, timeout=10).content
-            img_array = np.frombuffer(img_data, np.uint8)
-            frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-            # Detect faces
-            faces = face_cascade.detectMultiScale(
-                gray,
-                scaleFactor=1.2,
-                minNeighbors=8,
-                minSize=(80, 80)
-            )
-
-            for (x, y, w, h) in faces:
-                face_roi = gray[y:y+h, x:x+w]
-                label, confidence = recognizer.predict(face_roi)
-
-                if confidence < CONFIDENCE_THRESHOLD:
-                    label_text = people[label]
-                else:
-                    label_text = "Unknown visitor"
-
-                detected_names.append(label_text)
-
-                # Use the first detected face as representative
-                if not representative_image_url:
-                    representative_image_url = url
-
-        except Exception as e:
-            print(f"Error processing {url}: {e}")
-
-    # Decide final visitor name by majority vote
-    final_name = max(set(detected_names), key=detected_names.count) if detected_names else "Unknown visitor"
-
-    # Prepare payload for Raspberry Pi notification
-    payload = {
-        "owner_id": owner_id,
-        "visitor_name": final_name,
-        "image_url": representative_image_url or "",
-        "detected_label": final_name
-    }
+    visitor_name = "Unknown"
+    detected_label = "Unknown"
+    visitor_id = 0  # Default for unknown visitors
 
     try:
-        # Trigger the visitor notification
+        # Download image
+        img_data = requests.get(req.image_url, timeout=10).content
+        img_array = np.frombuffer(img_data, np.uint8)
+        frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # Detect faces
+        faces = face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.2,
+            minNeighbors=8,
+            minSize=(80, 80)
+        )
+
+        if len(faces) > 0:
+            # Take the first detected face
+            x, y, w, h = faces[0]
+            face_roi = gray[y:y+h, x:x+w]
+            label, confidence = recognizer.predict(face_roi)
+
+            if confidence < CONFIDENCE_THRESHOLD:
+                visitor_name = people[label]
+                detected_label = "Known"
+                visitor_id = get_visitor_id(visitor_name)
+            else:
+                visitor_name = "Unknown"
+                detected_label = "Unknown"
+                visitor_id = 0
+        else:
+            visitor_name = "No face detected"
+            detected_label = "Unknown"
+            visitor_id = 0
+
+    except Exception as e:
+        print(f"Error processing {req.image_url}: {e}")
+        visitor_name = "Error"
+        detected_label = "Unknown"
+        visitor_id = 0
+
+    payload = {
+        "visitor_id": visitor_id,
+        "owner_id": owner_id,
+        "image url": req.image_url,
+        "detected label": detected_label,
+        "visitor name": visitor_name
+    }
+
+    # Insert into visits table
+    insert_visit(visitor_id, owner_id, req.image_url)
+
+    # Send notification
+    try:
         requests.post(NOTIFICATION_ENDPOINT, json=payload, timeout=5)
     except Exception as e:
         print(f"Failed to send visitor notification: {e}")
 
-    # Return response
     return payload
