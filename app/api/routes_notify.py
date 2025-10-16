@@ -406,13 +406,12 @@ class DetectRequest(BaseModel):
 # ======================
 @router.post("/detect-visitor")
 async def detect_visitor(
-    req: DetectRequest,
-    owner_id: int = Query(..., description="Owner ID to send notification to")
+    req: DetectRequest
 ):
     visitor_name = "Unknown"
     detected_label = "Unknown"
     visitor_id = 0  # Default for unknown visitors
-
+    owner_id = 12
     try:
         # Download image
         img_data = requests.get(req.image_url, timeout=10).content
