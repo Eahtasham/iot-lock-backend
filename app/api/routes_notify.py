@@ -323,7 +323,7 @@ face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_fronta
 CONFIDENCE_THRESHOLD = 40
 
 class DetectRequest(BaseModel):
-    images: List[str]  # list of S3 URLs
+    images: list[str]  # list of S3 URLs
 
 # Replace this with the actual URL of your notification endpoint
 NOTIFICATION_ENDPOINT = "https://iot-lock-backend.onrender.com/api/notify/raspberry-pi/visitor-detected"

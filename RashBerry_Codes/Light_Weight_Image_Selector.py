@@ -3,15 +3,18 @@ import cv2
 import numpy as np
 import shutil
 import requests
+import json
 
 # ==========================================================
-# ⚡ Lightweight Hybrid Image Quality Selector
-# Author: GPT-5
+# ⚡ Lightweight Hybrid Image Quality Selector + Notify
 # ==========================================================
 
-IMAGE_DIR = "photos"    # folder with input images
-SELECT_DIR = "select"   # folder to store best image
-API_URL = "https://iot-lock-backend.onrender.com/upload/upload-image"
+IMAGE_DIR = "photos"
+SELECT_DIR = "select"
+UPLOAD_API_URL = "https://iot-lock-backend.onrender.com/upload/upload-image"
+DETECT_API_URL = "https://iot-lock-backend.onrender.com/api/notify/detect-visitor"
+API_KEY = "supersecret123"  # <-- your upload key
+OWNER_ID = 123  # <-- replace with actual owner ID
 
 # ==========================================================
 # Quality Metric Functions
@@ -54,21 +57,40 @@ def hybrid_score(image):
 # Upload Function
 # ==========================================================
 
-API_KEY = "supersecret123"  # <-- replace with your actual key
-
 def upload_image(filepath):
-    headers = {"x-api-key": API_KEY}  # add the required header
+    headers = {"x-api-key": API_KEY}
     with open(filepath, "rb") as f:
         files = {"file": (os.path.basename(filepath), f, "image/jpeg")}
         try:
-            response = requests.post(API_URL, headers=headers, files=files)
+            response = requests.post(UPLOAD_API_URL, headers=headers, files=files)
             if response.status_code == 200:
-                print(f"✅ Image uploaded successfully: {filepath}")
-                print(f"📤 Server response: {response.text}")
+                data = response.json()
+                print(f"✅ Image uploaded: {data.get('url')}")
+                return data.get("url")  # Return the uploaded image URL
             else:
                 print(f"❌ Upload failed ({response.status_code}): {response.text}")
+                return None
         except Exception as e:
             print(f"❌ Error uploading: {e}")
+            return None
+
+# ==========================================================
+# Call Detect Visitor API
+# ==========================================================
+
+def call_detect_api(image_url):
+    payload = {"images": [image_url]}  # <-- note the list
+    params = {"owner_id": OWNER_ID}
+    try:
+        response = requests.post(DETECT_API_URL, json=payload, params=params)
+        if response.status_code == 200:
+            print("📡 Visitor detection response:")
+            print(json.dumps(response.json(), indent=4))
+        else:
+            print(f"❌ Detection API failed ({response.status_code}): {response.text}")
+    except Exception as e:
+        print(f"❌ Error calling detection API: {e}")
+
 
 # ==========================================================
 # Main Function
@@ -101,7 +123,10 @@ def select_best_image():
         print(f"📁 Saved to: {selected_path}")
 
         # Upload the image
-        upload_image(selected_path)
+        uploaded_url = upload_image(selected_path)
+        if uploaded_url:
+            # Call detect visitor API with uploaded URL
+            call_detect_api(uploaded_url)
     else:
         print("❌ No valid images found.")
 
