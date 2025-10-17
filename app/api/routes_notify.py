@@ -321,7 +321,7 @@ people = np.load(people_path, allow_pickle=True)
 
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
-CONFIDENCE_THRESHOLD = 40
+CONFIDENCE_THRESHOLD = 60
 NOTIFICATION_ENDPOINT = "https://iot-lock-backend.onrender.com/api/notify/raspberry-pi/visitor-detected"
 
 # ======================
