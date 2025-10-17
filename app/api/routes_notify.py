@@ -306,24 +306,6 @@ async def raspberry_pi_visitor_detected(
         raise HTTPException(status_code=500, detail=str(e))
     
 
-# # ======================
-# # Paths and model load
-# # ======================
-# BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# DATA_DIR = os.path.join(BASE_DIR, "ml", "data")
-
-# recognizer_path = os.path.join(DATA_DIR, "face_trained.yml")
-# people_path = os.path.join(DATA_DIR, "people.npy")
-
-# recognizer = cv2.face.LBPHFaceRecognizer_create()
-# recognizer.read(recognizer_path)
-# people = np.load(people_path, allow_pickle=True)
-
-# face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-
-# CONFIDENCE_THRESHOLD = 40
-# NOTIFICATION_ENDPOINT = "https://iot-lock-backend.onrender.com/api/notify/raspberry-pi/visitor-detected"
-
 # ======================
 # Database connection
 # ======================
@@ -434,7 +416,7 @@ async def detect_visitor(
             label, confidence = recognizer.predict(face_roi)
 
             if confidence < CONFIDENCE_THRESHOLD:
-                visitor_name = people[label].replace("_", " ")  # ✅ fix here
+                visitor_name = people[label].replace("_", " ")
                 detected_label = "Known"
                 visitor_id = get_visitor_id(visitor_name)
             else:
