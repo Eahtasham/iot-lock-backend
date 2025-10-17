@@ -216,8 +216,8 @@ async def send_test_notification(owner_id: int):
     try:
         result = await send_notifications_to_owner(
             owner_id=owner_id,
-            title="🔧 Test Notification",
-            body="This is a test notification from your IoT lock system",
+            title="🔔 Someone has arrived",
+            body="Open the app to accept or reject the entry request.",
             data={
                 "action": "test", 
                 "timestamp": "2024-01-01T00:00:00Z",
