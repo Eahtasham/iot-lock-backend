@@ -216,8 +216,8 @@ async def send_test_notification(owner_id: int):
     try:
         result = await send_notifications_to_owner(
             owner_id=owner_id,
-            title="🔧 Test Notification",
-            body="This is a test notification from your IoT lock system",
+            title="🔔 Someone has arrived",
+            body="Open the app to accept or reject the entry request.",
             data={
                 "action": "test", 
                 "timestamp": "2024-01-01T00:00:00Z",
@@ -465,7 +465,8 @@ async def detect_visitor(
 
     # Send notification
     try:
-        requests.post(NOTIFICATION_ENDPOINT, json=payload, timeout=5)
+        notification_url = f"https://iot-lock-backend.onrender.com/api/notify/test/{owner_id}"
+        requests.post(notification_url, timeout=5)
     except Exception as e:
         print(f"Failed to send visitor notification: {e}")
 
