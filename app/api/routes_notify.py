@@ -465,7 +465,8 @@ async def detect_visitor(
 
     # Send notification
     try:
-        requests.post(NOTIFICATION_ENDPOINT, json=payload, timeout=5)
+        notification_url = f"https://iot-lock-backend.onrender.com/api/notify/test/{owner_id}"
+        requests.post(notification_url, timeout=5)
     except Exception as e:
         print(f"Failed to send visitor notification: {e}")
 
