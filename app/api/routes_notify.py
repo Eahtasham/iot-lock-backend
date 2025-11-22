@@ -393,7 +393,9 @@ async def detect_visitor(req: DetectRequest):
 
     try:
         # The user_name is already the recognized person name
-        visitor_name = req.user_name.strip() if req.user_name else "Unknown"
+        # Convert "Parthib_Mitra" → "Parthib Mitra"
+        visitor_name = req.user_name.replace("_", " ").strip() if req.user_name else "Unknown"
+
 
         # Get visitor_id from DB
         visitor_id = get_visitor_id(visitor_name)
