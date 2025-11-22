@@ -382,74 +382,48 @@ def insert_visit(visitor_id: int, owner_id: int, image_url: str):
 # ======================
 class DetectRequest(BaseModel):
     image_url: str  # Single S3 URL
+    user_name: str
 
 # ======================
 # Endpoint
 # ======================
 @router.post("/detect-visitor")
-async def detect_visitor(
-    req: DetectRequest
-):
-    visitor_name = "Unknown"
-    detected_label = "Unknown"
-    visitor_id = 0
-    owner_id = 12
+async def detect_visitor(req: DetectRequest):
+    owner_id = 12  # or dynamic if needed
+
     try:
-        # Download image
-        img_data = requests.get(req.image_url, timeout=10).content
-        img_array = np.frombuffer(img_data, np.uint8)
-        frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # The user_name is already the recognized person name
+        visitor_name = req.user_name.strip() if req.user_name else "Unknown"
 
-        # Detect faces
-        faces = face_cascade.detectMultiScale(
-            gray,
-            scaleFactor=1.2,
-            minNeighbors=8,
-            minSize=(80, 80)
-        )
+        # Get visitor_id from DB
+        visitor_id = get_visitor_id(visitor_name)
 
-        if len(faces) > 0:
-            # Take the first detected face
-            x, y, w, h = faces[0]
-            face_roi = gray[y:y+h, x:x+w]
-            label, confidence = recognizer.predict(face_roi)
-
-            if confidence < CONFIDENCE_THRESHOLD:
-                visitor_name = people[label].replace("_", " ")
-                detected_label = "Known"
-                visitor_id = get_visitor_id(visitor_name)
-            else:
-                visitor_name = "Unknown"
-                detected_label = "Unknown"
-                visitor_id = 0
-        else:
-            visitor_name = "No face detected"
+        # If not found, treat as Unknown
+        if visitor_id == 0:
             detected_label = "Unknown"
-            visitor_id = 0
+        else:
+            detected_label = "Known"
+
+        # Build response payload
+        payload = {
+            "visitor_id": visitor_id,
+            "owner_id": owner_id,
+            "image_url": req.image_url,
+            "detected_label": detected_label,
+            "visitor_name": visitor_name
+        }
+
+        # Insert into visits table
+        insert_visit(visitor_id, owner_id, req.image_url)
+
+        # Send notification (test notification endpoint)
+        try:
+            notification_url = f"https://iot-lock-backend.onrender.com/api/notify/test/{owner_id}"
+            requests.post(notification_url, timeout=5)
+        except Exception as e:
+            print(f"Failed to send visitor notification: {e}")
+
+        return payload
 
     except Exception as e:
-        print(f"Error processing {req.image_url}: {e}")
-        visitor_name = "Error"
-        detected_label = "Unknown"
-        visitor_id = 0
-
-    payload = {
-        "visitor_id": visitor_id,
-        "owner_id": owner_id,
-        "image url": req.image_url,
-        "detected label": detected_label,
-        "visitor name": visitor_name
-    }
-
-    # Insert into visits table
-    insert_visit(visitor_id, owner_id, req.image_url)
-
-    # Send notification
-    try:
-        notification_url = f"https://iot-lock-backend.onrender.com/api/notify/test/{owner_id}"
-        requests.post(notification_url, timeout=5)
-    except Exception as e:
-        print(f"Failed to send visitor notification: {e}")
-
-    return payload
+        raise HTTPException(status_code=500, detail=str(e))
